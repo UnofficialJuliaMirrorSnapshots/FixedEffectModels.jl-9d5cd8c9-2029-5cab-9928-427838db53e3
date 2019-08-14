@@ -16,16 +16,14 @@ import DataFrames: DataFrame, AbstractDataFrame, completecases, names!, ismissin
 import Combinatorics: combinations
 using CategoricalArrays
 using FillArrays
-import StatsBase: coef, nobs, coeftable, vcov, predict, residuals, var, RegressionModel, model_response, stderror, confint, fit, CoefTable, dof_residual, r2, adjr2, deviance, mss, rss, islinear, response
-import StatsModels: @formula,  Formula, ModelFrame, ModelMatrix, Terms, coefnames, evalcontrasts, check_non_redundancy!
+import StatsBase: coef, nobs, coeftable, vcov, predict, residuals, var, RegressionModel, model_response, stderror, confint, fit, CoefTable, dof_residual, r2, adjr2, deviance, mss, rss, islinear, response, modelmatrix
+import StatsModels: @formula,  FormulaTerm, Term, InteractionTerm, ConstantTerm, MatrixTerm, AbstractTerm, coefnames, columntable, missing_omit, termvars, schema, apply_schema, modelmatrix, response, terms, terms!, sort_terms!, parse!, capture_call
 using Reexport
 @reexport using StatsBase
-@reexport using StatsModels
 @reexport using FixedEffects
-
 ##############################################################################
 ##
-## Exported methods and types 
+## Exported methods and types
 ##
 ##############################################################################
 
@@ -43,16 +41,16 @@ RegressionResultIV,
 RegressionResultFE,
 RegressionResultFEIV,
 
-AbstractVcovFormula, 
-VcovSimpleFormula, 
-VcovRobustFormula, 
+AbstractVcovFormula,
+VcovSimpleFormula,
+VcovRobustFormula,
 VcovClusterFormula,
 VcovFormula,
 
-AbstractVcovMethod, 
+AbstractVcovMethod,
 VcovMethod,
-VcovSimpleMethod, 
-VcovWhiteMethod, 
+VcovSimpleMethod,
+VcovWhiteMethod,
 VcovClusterMethod,
 
 vcov!,
@@ -67,12 +65,12 @@ Model,
 ## Load files
 ##
 ##############################################################################
-include("utils/model.jl")
 include("utils/weights.jl")
 include("utils/fixedeffects.jl")
 include("utils/basecol.jl")
 include("utils/tss.jl")
 
+include("formula/model.jl")
 include("formula/formula_iv.jl")
 include("formula/formula_fe.jl")
 

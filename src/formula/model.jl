@@ -1,5 +1,5 @@
 struct Model
-    f::Formula
+    f::FormulaTerm
     dict::Dict{Symbol, Any}
 end
 
@@ -32,27 +32,23 @@ depvar ~ exogeneousvars + (endogeneousvars ~ instrumentvars
 ```julia
 using DataFrames, RDatasets, FixedEffectModels
 df = dataset("plm", "Cigar")
-df[:StateC] =  categorical(df[:State])
-df[:YearC] =  categorical(df[:Year])
+df.StateC =  categorical(df.State)
+df.YearC =  categorical(df.Year)
 reg(df, @model(Sales ~ NDI, weights = Pop))
 @model(Sales ~ NDI, fe = StateC, vcov = robust)
-@model(Sales ~ NDI, fe = StateC + YearC, weights = Pop, vcov = cluster(StateC)
+@model(Sales ~ NDI, fe = StateC + YearC, weights = Pop, vcov = cluster(StateC))
 
 ```
 """
-macro model(args...)
-    Expr(:call, :model_helper, (esc(Base.Meta.quot(a)) for a in args)...)
+macro model(ex, kws...)
+    f = FixedEffectModels.terms!(FixedEffectModels.sort_terms!(FixedEffectModels.parse!(ex)))
+    d = Dict{Symbol, Any}()
+    for kw in kws
+       isa(kw, Expr) &&  kw.head== :(=) || throw("All arguments of @model, except the first one, should be keyboard arguments")
+       d[kw.args[1]] = kw.args[2]
+    end
+    :(Model($f, $d))
 end
 
-function model_helper(args...)
-    (args[1].head === :call && args[1].args[1] === :(~)) || throw("First argument of @model should be a formula")
-    f = @eval(@formula($(args[1].args[2]) ~ $(args[1].args[3])))
-    dict = Dict{Symbol, Any}()
-    for i in 2:length(args)
-        isa(args[i], Expr) &&  args[i].head== :(=) || throw("All arguments of @model, except the first one, should be keyboard arguments")
-        dict[args[i].args[1]] = args[i].args[2]
-    end
-    Model(f, dict)
-end
 
 

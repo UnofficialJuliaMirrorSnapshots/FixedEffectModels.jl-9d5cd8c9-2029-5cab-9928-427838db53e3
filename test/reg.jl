@@ -1,16 +1,16 @@
 
 using FixedEffectModels, CSV, DataFrames, LinearAlgebra, Test
 df = CSV.read(joinpath(dirname(pathof(FixedEffectModels)), "../dataset/Cigar.csv"))
-df[:id1] = df[:State]
-df[:id2] = df[:Year]
-df[:pid1] = categorical(df[:id1])
-df[:ppid1] = categorical(div.(df[:id1], 10))
-df[:pid2] = categorical(df[:id2])
-df[:y] = df[:Sales]
-df[:x1] = df[:Price]
-df[:z1] = df[:Pimin]
-df[:x2] = df[:NDI]
-df[:w] = df[:Pop]
+df.id1 = df.State
+df.id2 = df.Year
+df.pid1 = categorical(df.id1)
+df.ppid1 = categorical(div.(df.id1, 10))
+df.pid2 = categorical(df.id2)
+df.y = df.Sales
+df.x1 = df.Price
+df.z1 = df.Pimin
+df.x2 = df.NDI
+df.w = df.Pop
 
 ##############################################################################
 ##
@@ -26,7 +26,7 @@ m = @model y ~ x1 weights = w
 x = reg(df, m)
 @test coef(x) ≈ [137.72495428982756,-0.23738] atol = 1e-4
 
-df[:SalesInt] = round.(Int64, df[:Sales])
+df.SalesInt = round.(Int64, df.Sales)
 m = @model SalesInt ~ Price
 x = reg(df, m)
 @test coef(x) ≈ [139.72674,-0.2296683205] atol = 1e-4
@@ -42,7 +42,7 @@ x = reg(df, m)
 m = @model y ~ x1 fe = pid1 + pid2
 x = reg(df, m)
 @test coef(x)  ≈ [-1.08471] atol = 1e-4
-m = @model y ~ x1 fe = pid1 + pid1&id2
+m = @model y ~ x1 fe = pid1 + pid1*id2
 x = reg(df, m)
 @test coef(x) ≈   [-0.53470] atol = 1e-4
 m = @model y ~ x1 fe = pid1*id2
@@ -159,10 +159,27 @@ x = reg(df, m)
 #x = reg(df, m)
 
 
+##############################################################################
+##
+## Functions
+##
+##############################################################################
 
+# function
+m = @model y ~ log(x1)
+x = reg(df, m)
+@test coef(x)[1] ≈184.98520688 atol = 1e-4
 
+# function defined in user space
+mylog(x) = log(x)
+m = @model y ~ mylog(x1)
+x = reg(df, m)
 
-
+# Function returning Inf
+df.x1_zero = copy(df.x1)
+df.x1_zero[1] = 0.0
+m = @model y ~ log(x1_zero)
+@test_throws  "Some observations for the regressor are infinite" x = reg(df, m)
 ##############################################################################
 ##
 ## collinearity
@@ -170,18 +187,18 @@ x = reg(df, m)
 ##
 ##############################################################################
 # ols
-df[:x12] = df[:x1]
+df.x12 = df.x1
 m = @model y ~ x1 + x12
 x = reg(df, m)
 @test coef(x) ≈ [139.7344639806166,-0.22974688593485126,0.0] atol = 1e-4
 
 # iv
-df[:x22] = df[:x2]
+df.x22 = df.x2
 m = @model y ~ x22 + x2 + (x1 ~ z1)
 x = reg(df, m)
 @test coef(x)[2] == 0 || coef(x)[3] == 0
 
-df[:zz1] = df[:z1]
+df.zz1 = df.z1
 m = @model y ~ zz1 + (x1 ~ x2 + z1)
 x = reg(df, m)
 @test coef(x)[2] != 0.0
@@ -190,8 +207,8 @@ x = reg(df, m)
 #@test_throws ErrorException reg(df, @formula(y ~ x1 + (x2 + w = x2)))
 
 # catch continuous variables in fixed effects
-@test_throws ErrorException reg(df, @model(y ~ x1, fe = x2))
-@test_throws ErrorException reg(df, @model(y ~ x1, fe = x2 + pid1))
+#@test_throws ErrorException reg(df, @model(y ~ x1, fe = x2))
+# @test_throws ErrorException reg(df, @model(y ~ x1, fe = x2 + pid1))
 
 
 
@@ -199,7 +216,7 @@ x = reg(df, m)
 using Random
 Random.seed!(0)
 df_r = DataFrame(x1 = randn(10000) * 100)
-df_r[:x2] = df_r[:x1].^4
+df_r.x2 = df_r.x1.^4
 result = reg(df_r, @model(x1 ~ x2 ))
 @test sum(abs.(coef(result)) .> 0)  == 2
 
@@ -291,7 +308,7 @@ x = reg(df, m)
 ##
 ##############################################################################
 m = @model y ~ x1 + pid1
-x0 = reg(df[df[:State] .<= 30, :], m)
+x0 = reg(df[df.State .<= 30, :], m)
 
 # categorical variable as
 m = @model y ~ x1 + pid1 subset = (State .<= 30)
@@ -301,8 +318,8 @@ x1 = reg(df, m)
 @test vcov(x0) ≈ vcov(x1) atol = 1e-4
 
 
-df[:id1_missing] = ifelse.(df[:id1] .<= 30, df[:id1], missing)
-df[:pid1_missing] = categorical(df[:id1_missing])
+df.id1_missing = ifelse.(df.id1 .<= 30, df.id1, missing)
+df.pid1_missing = categorical(df.id1_missing)
 m = @model y ~ x1 + pid1_missing
 x2 = reg(df, m)
 @test length(x2.esample) == size(df, 1)
@@ -444,8 +461,8 @@ x = reg(df, m)
 ##
 ##
 ##############################################################################
-df[:n] = max.(1:size(df, 1), 60)
-df[:pn] = categorical(df[:n])
+df.n = max.(1:size(df, 1), 60)
+df.pn = categorical(df.n)
 m = @model y ~ x1 fe = pn  vcov = cluster(pid1)
 x = reg(df, m)
 @test x.nobs == 60
@@ -463,62 +480,58 @@ x = reg(df, m, drop_singletons = false)
 ##
 ##############################################################################
 df = CSV.read(joinpath(dirname(pathof(FixedEffectModels)), "../dataset/EmplUK.csv"))
-df[:id1] = df[:Firm]
-df[:id2] = df[:Year]
-df[:pid1] = categorical(df[:id1])
-df[:pid2] = categorical(df[:id2])
-df[:y] = df[:Wage]
-df[:x1] = df[:Emp]
-df[:w] = df[:Output]
+df.id1 = df.Firm
+df.id2 = df.Year
+df.pid1 = categorical(df.id1)
+df.pid2 = categorical(df.id2)
+df.y = df.Wage
+df.x1 = df.Emp
+df.w = df.Output
 
-if Base.USE_GPL_LIBS
-	method_s = [:cholesky, :qr, :lsmr, :lsmr_parallel, :lsmr_threads]
-else
-	method_s = [:lsmr, :lsmr_parallel, :lsmr_threads]
-end
+method_s = Base.USE_GPL_LIBS ? [:cholesky, :qr, :lsmr, :lsmr_parallel, :lsmr_threads] : [:lsmr, :lsmr_parallel, :lsmr_threads]
 
 for method in method_s
 	# absorb
-	m = @model y ~ x1 fe = pid1 method = $(method)
-	x = reg(df, m)
+	m = @model y ~ x1 fe = pid1
+	x = reg(df, m, method = method)
 	@test coef(x) ≈ [- 0.11981270017206136] atol = 1e-4
-	m = @model y ~ x1 fe = pid1&id2 method = $(method)
-	x = reg(df, m)
+	m = @model y ~ x1 fe = pid1&id2
+	x = reg(df, m, method = method)
 	@test coef(x)  ≈ [-315.0000747500431,- 0.07633636891202833] atol = 1e-4
-	m = @model y ~ x1 fe = id2&pid1 method = $(method)
-	x = reg(df, m)
+	m = @model y ~ x1 fe = id2&pid1
+	x = reg(df, m, method = method)
 	@test coef(x) ≈  [-315.0000747500431,- 0.07633636891202833] atol = 1e-4
-	m = @model y ~ 1 fe = id2&pid1 method = $(method)
-	x = reg(df, m)
+	m = @model y ~ 1 fe = id2&pid1
+	x = reg(df, m, method = method)
 	@test coef(x) ≈  [- 356.40430526316396] atol = 1e-4
-	m = @model y ~ x1 fe = pid1 weights = w method = $(method)
-	x = reg(df, m)
+	m = @model y ~ x1 fe = pid1 weights = w
+	x = reg(df, m, method = method)
 	@test coef(x) ≈ [- 0.11514363590574725] atol = 1e-4
 
 	# absorb + weights
-	m = @model y ~ x1 fe = pid1 + pid2 method = $(method)
-	x = reg(df, m)
+	m = @model y ~ x1 fe = pid1 + pid2
+	x = reg(df, m, method = method)
 	@test coef(x)  ≈  [- 0.04683333721137311] atol = 1e-4
-	m = @model y ~ x1 fe = pid1 + pid2 weights = w method = $(method)
-	x = reg(df, m)
+	m = @model y ~ x1 fe = pid1 + pid2 weights = w
+	x = reg(df, m, method = method)
 	@test coef(x) ≈  [- 0.043475472188120416] atol = 1e-3
 
 	## the last two ones test an ill conditioned model matrix
-	m = @model y ~ x1 fe = pid1 + pid1&id2 method = $(method)
-	x = reg(df, m)
+	m = @model y ~ x1 fe = pid1 + pid1&id2
+	x = reg(df, m, method = method)
 	@test coef(x)  ≈   [- 0.122354] atol = 1e-4
 	@test x.iterations <= 30
 
-	m = @model y ~ x1 fe = pid1 + pid1&id2 weights = w method = $(method)
-	x = reg(df, m)
+	m = @model y ~ x1 fe = pid1 + pid1&id2 weights = w
+	x = reg(df, m, method = method)
 	@test coef(x) ≈ [- 0.11752306001586807] atol = 1e-4
 	@test x.iterations <= 50
 end
 
 
 # add tests with missing fixed effects
-df[:id1_missing] = ifelse.(df[:id1] .<= 30, missing, df[:id1])
-df[:pid1_missing] = categorical(df[:id1_missing])
+df.id1_missing = ifelse.(df.id1 .<= 30, missing, df.id1)
+df.pid1_missing = categorical(df.id1_missing)
 
 ## test with missing fixed effects
 m = @model y ~ x1 fe = pid1_missing
@@ -530,8 +543,8 @@ x = reg(df, m)
 @test x.nobs == 821
 
 ## test with missing interaction
-df[:id3] = df[:id2] .>= 1980
-df[:pid3] = categorical(df[:id3])
+df.id3 = df.id2 .>= 1980
+df.pid3 = categorical(df.id3)
 m = @model y ~ x1 fe = pid1_missing & pid3
 x = reg(df, m)
 @test coef(x) ≈ [-0.100863] atol = 1e-4

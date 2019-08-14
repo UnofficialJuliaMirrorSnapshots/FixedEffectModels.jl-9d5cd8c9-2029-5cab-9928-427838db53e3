@@ -1,5 +1,4 @@
 [![Build Status](https://travis-ci.org/matthieugomez/FixedEffectModels.jl.svg?branch=master)](https://travis-ci.org/matthieugomez/FixedEffectModels.jl)
-[![Coverage Status](https://coveralls.io/repos/matthieugomez/FixedEffectModels.jl/badge.svg?branch=master)](https://coveralls.io/r/matthieugomez/FixedEffectModels.jl?branch=master)
 
 This package estimates linear models with high dimensional categorical variables and/or instrumental variables. 
 
@@ -13,8 +12,8 @@ To estimate a `@model`, specify  a formula with, eventually, a set of fixed effe
 ```julia
 using DataFrames, RDatasets, FixedEffectModels
 df = dataset("plm", "Cigar")
-df[:StateCategorical] =  categorical(df[:State])
-df[:YearCategorical] =  categorical(df[:Year])
+df.StateCategorical =  categorical(df.State)
+df.YearCategorical =  categorical(df.Year)
 reg(df, @model(Sales ~ NDI, fe = StateCategorical + YearCategorical, weights = Pop, vcov = cluster(StateCategorical)))
 # =====================================================================
 # Number of obs:               1380   Degrees of freedom:            31
@@ -35,13 +34,13 @@ reg(df, @model(Sales ~ NDI, fe = StateCategorical + YearCategorical, weights = P
 - Fixed effect variables are indicated with the keyword argument `fe`. They must be of type CategoricalArray (use `categorical` to convert a variable to a `CategoricalArray`).
 
 	```julia
-	df[:StateCategorical] =  categorical(df[:State])
+	df.StateCategorical =  categorical(df.State)
 	# one high dimensional fixed effect
 	fe = StateCategorical
 	```
 	You can add an arbitrary number of high dimensional fixed effects, separated with `+`
 	```julia
-	df[:YearCategorical] =  categorical(df[:Year])
+	df.YearCategorical =  categorical(df.Year)
 	fe = StateCategorical + YearCategorical
 	```
 	Interact multiple categorical variables using `&` 

@@ -30,40 +30,20 @@ end
 
 # predict, residuals, modelresponse
 function predict(x::AbstractRegressionResult, df::AbstractDataFrame)
-    rf = deepcopy(x.formula)
-    secondstage!(rf)
-
-    newTerms = dropresponse(Terms(rf))
-    mf = ModelFrame(newTerms, df)
-    newX = ModelMatrix(mf).m
-
+    cols, nonmissings = missing_omit(columntable(df), MatrixTerm(x.formula_schema.rhs))
+    new_x = modelmatrix(x.formula_schema, cols)
     out = Vector{Union{Float64, Missing}}(missing, size(df, 1))
-    out[nonmissing(mf)] = newX * x.coef
+    out[nonmissings] = new_x * x.coef
 end
 
 function residuals(x::AbstractRegressionResult, df::AbstractDataFrame)
-    rf = deepcopy(x.formula)
-    secondstage!(rf)
-
-    mf = ModelFrame(Terms(rf), df)
-    newX = ModelMatrix(mf).m 
+    cols, nonmissings = missing_omit(columntable(df), x.formula_schema)
+    new_x = modelmatrix(x.formula_schema, cols)
+    y = response(x.formula_schema, df)
     out = Vector{Union{Float64, Missing}}(missing,  size(df, 1))
-    out[nonmissing(mf)] = model_response(mf) -  newX * x.coef
+    out[nonmissings] = y -  new_x * x.coef
 end
 
-function response(x::AbstractRegressionResult, df::AbstractDataFrame)
-    rf = deepcopy(x.formula)
-    secondstage!(rf)
-    mf = ModelFrame(Terms(rf), df)
-    model_response(mf)
-end
-
-function modelmatrix(x::AbstractRegressionResult, df::AbstractDataFrame)
-    rf = deepcopy(x.formula)
-    secondstage!(rf)
-    mf = ModelFrame(Terms(rf), df)
-    ModelMatrix(mf)
-end
 
 # depreciations
 function df_residual(x::AbstractRegressionResult)
@@ -223,7 +203,8 @@ struct RegressionResult <: AbstractRegressionResult
 
     coefnames::Vector       # Name of coefficients
     yname::Symbol           # Name of dependent variable
-    formula::Formula        # Original formula 
+    formula::FormulaTerm        # Original formula 
+    formula_schema
 
     nobs::Int64             # Number of observations
     dof_residual::Int64      # degrees of freedoms
@@ -255,7 +236,8 @@ struct RegressionResultIV <: AbstractRegressionResult
 
     coefnames::Vector       # Name of coefficients
     yname::Symbol           # Name of dependent variable
-    formula::Formula        # Original formula 
+    formula::FormulaTerm        # Original formula 
+    formula_schema
 
     nobs::Int64             # Number of observations
     dof_residual::Int64      # degrees of freedoms
@@ -293,7 +275,9 @@ struct RegressionResultFE <: AbstractRegressionResult
 
     coefnames::Vector       # Name of coefficients
     yname::Symbol           # Name of dependent variable
-    formula::Formula        # Original formula 
+    formula::FormulaTerm        # Original formula 
+    formula_schema
+
     feformula::Union{Symbol, Expr}      # fixed effect formula 
 
     nobs::Int64             # Number of observations
@@ -332,7 +316,9 @@ struct RegressionResultFEIV <: AbstractRegressionResult
 
     coefnames::Vector       # Name of coefficients
     yname::Symbol           # Name of dependent variable
-    formula::Formula        # Original formula 
+    formula::FormulaTerm        # Original formula 
+    formula_schema
+
     feformula::Union{Symbol, Expr}      # fixed effect formula 
 
     nobs::Int64             # Number of observations
@@ -373,7 +359,7 @@ function predict(x::Union{RegressionResultFEIV, RegressionResultFE}, ::AbstractD
     error("predict is not defined for fixed effect models. To access the fixed effects, run `reg` with the option save = true, and access fixed effects with `fes()`")
 end
 fes(x::Union{RegressionResultFEIV, RegressionResultFE}, ::AbstractDataFrame) = fes(x)
-fes(x::Union{RegressionResultFEIV, RegressionResultFE}) = x.augmentdf[2:size(x.augmentdf, 2)]
+fes(x::Union{RegressionResultFEIV, RegressionResultFE}) = x.augmentdf[!, 2:size(x.augmentdf, 2)]
 
 function residuals(x::Union{RegressionResultFEIV, RegressionResultFE}, ::AbstractDataFrame)
     if size(x.augmentdf, 2) == 0
@@ -383,7 +369,7 @@ function residuals(x::Union{RegressionResultFEIV, RegressionResultFE}, ::Abstrac
     end
 end
 function residuals(x::Union{RegressionResultFEIV, RegressionResultFE})
-        x.augmentdf[:residuals]
+        x.augmentdf[!, :residuals]
 end
 
 
