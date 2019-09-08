@@ -9,7 +9,7 @@ function parse_fixedeffect(df::AbstractDataFrame, feformula::FormulaTerm)
     fe = FixedEffect[]
     id = Symbol[]
     for term in eachterm(feformula.rhs)
-        result = parse_fixedeffect(df, term)
+        result = parse_fixedeffect(df, term, feformula)
         if result != nothing
             push!(fe, result[1])
             push!(id, result[2])
@@ -18,20 +18,21 @@ function parse_fixedeffect(df::AbstractDataFrame, feformula::FormulaTerm)
     return fe, id
 end
 
-parse_fixedeffect(x::Nothing) = nothing
-
 # Constructors from dataframe + Term
-function parse_fixedeffect(df::AbstractDataFrame, a::Term)
-    a = Symbol(a)
-    v = df[!, a]
+function parse_fixedeffect(df::AbstractDataFrame, a::Term, feformula::FormulaTerm)
+    v = df[!, Symbol(a)]
     if isa(v, CategoricalVector)
+        return FixedEffect(v), Symbol(a)
+    else
         # x from x*id -> x + id + x&id
-        return FixedEffect(v), a
+        if !any(isa(term, InteractionTerm) & (a ∈ terms(term)) for term in eachterm(feformula.rhs))
+               error("The term $(a) in fe= is a continuous variable. Convert it to a categorical variable using 'categorical'.")
+        end
     end
 end
 
 # Constructors from dataframe + InteractionTerm
-function parse_fixedeffect(df::AbstractDataFrame, a::InteractionTerm)
+function parse_fixedeffect(df::AbstractDataFrame, a::InteractionTerm, feformula::FormulaTerm)
     factorvars, interactionvars = _split(df, a)
     if !isempty(factorvars)
         # x1&x2 from (x1&x2)*id
@@ -40,10 +41,6 @@ function parse_fixedeffect(df::AbstractDataFrame, a::InteractionTerm)
         return fe, id
     end
 end
-
-
-
-
 
 function _split(df::AbstractDataFrame, a::InteractionTerm)
     factorvars, interactionvars = Symbol[], Symbol[]
