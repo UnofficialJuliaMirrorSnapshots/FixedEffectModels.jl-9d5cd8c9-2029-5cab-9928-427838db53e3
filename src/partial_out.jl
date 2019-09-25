@@ -5,8 +5,9 @@ Partial out variables in a Dataframe
 * `df::AbstractDataFrame`
 * `model::Model`: A `Model` created using `@model`. See `@model`.
 * `add_mean::Bool`: Should the initial mean added to the returned variable?
-* `method::Symbol`: A symbol for the method. Default is :lsmr (akin to conjugate gradient descent). Other choices are :qr and :cholesky (factorization methods)
+* `method::Symbol`: A symbol for the method. Default is :lsmr (akin to conjugate gradient descent). Other choices are :lsmr_parallel, :lsmr_threads, :lsmr_gpu (requires `CuArrays`. Use the option `double_precision = false` to use `Float32` on the GPU).
 * `maxiter::Integer`: Maximum number of iterations
+* `double_precision::Bool`: Should the demeaning operation use Float64 rather than Float32? Default to true.
 * `tol::Real`: Tolerance
 
 ### Returns
@@ -38,8 +39,9 @@ function partial_out(df::AbstractDataFrame, f::FormulaTerm;
     weights::Union{Symbol, Expr, Nothing} = nothing,
     add_mean = false,
     maxiter::Integer = 10000, contrasts::Dict = Dict{Symbol, Any}(),
-    tol::Real = 1e-8,
-    method::Symbol = :lsmr)
+    method::Symbol = :lsmr,
+    double_precision::Bool = true,
+    tol::Real = double_precision ? sqrt(eps(Float64)) : sqrt(eps(Float32)))
     weightvar = weights
 
     if  (ConstantTerm(0) ∉ eachterm(f.rhs)) & (ConstantTerm(1) ∉ eachterm(f.rhs))
@@ -83,7 +85,7 @@ function partial_out(df::AbstractDataFrame, f::FormulaTerm;
             has_absorb_intercept = true
         end
         fes = FixedEffect[_subset(fe, esample) for fe in fes]
-        feM = FixedEffectMatrix(fes, sqrtw, Val{method})
+        feM = AbstractFixedEffectMatrix{double_precision ? Float64 : Float32}(fes, sqrtw, Val{method})
     end
 
     # Compute residualized Y

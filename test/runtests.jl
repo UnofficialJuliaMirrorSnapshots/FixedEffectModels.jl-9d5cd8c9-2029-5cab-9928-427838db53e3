@@ -7,6 +7,7 @@ tests = ["reg.jl",
 
 println("Running tests:")
 
+
 for test in tests
 	try
 		include(test)

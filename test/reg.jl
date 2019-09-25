@@ -540,10 +540,13 @@ df.y = df.Wage
 df.x1 = df.Emp
 df.w = df.Output
 
-method_s = Base.USE_GPL_LIBS ? [:cholesky, :qr, :lsmr, :lsmr_parallel, :lsmr_threads] : [:lsmr, :lsmr_parallel, :lsmr_threads]
 
-for method in method_s
-	# absorb
+methods_vec = [:lsmr, :lsmr_parallel, :lsmr_threads]
+if isdefined(FixedEffects, :FixedEffectLSMRGPU)
+	push!(methods_vec, :lsmr_gpu)
+end
+for method in methods_vec
+	@show method
 	m = @model y ~ x1 fe = pid1
 	x = reg(df, m, method = method)
 	@test coef(x) ≈ [- 0.11981270017206136] atol = 1e-4
@@ -578,6 +581,31 @@ for method in method_s
 	x = reg(df, m, method = method)
 	@test coef(x) ≈ [- 0.11752306001586807] atol = 1e-4
 	@test x.iterations <= 50
+
+	m = @model y ~ x1 fe = pid1
+	x = reg(df, m, method = method, double_precision = false)
+	@test coef(x) ≈ [- 0.11981270017206136] rtol = 1e-4
+	m = @model y ~ x1 fe = pid1&id2
+	x = reg(df, m, method = method, double_precision = false)
+	@test coef(x)  ≈ [-315.0000747500431,- 0.07633636891202833] rtol = 1e-4
+	m = @model y ~ x1 fe = id2&pid1
+	x = reg(df, m, method = method, double_precision = false)
+	@test coef(x) ≈  [-315.0000747500431,- 0.07633636891202833] rtol = 1e-4
+	m = @model y ~ 1 fe = id2&pid1
+	x = reg(df, m, method = method, double_precision = false)
+	@test coef(x) ≈  [- 356.40430526316396] rtol = 1e-4
+	m = @model y ~ x1 fe = pid1 weights = w
+	x = reg(df, m, method = method, double_precision = false)
+	@test coef(x) ≈ [- 0.11514363590574725] rtol = 1e-4
+
+	# absorb + weights
+	m = @model y ~ x1 fe = pid1 + pid2
+	x = reg(df, m, method = method, double_precision = false)
+	@test coef(x)  ≈  [- 0.04683333721137311] rtol = 1e-4
+	m = @model y ~ x1 fe = pid1 + pid2 weights = w
+	x = reg(df, m, method = method, double_precision = false)
+	@test coef(x) ≈  [- 0.043475472188120416] atol = 1e-3
+
 end
 
 
@@ -606,7 +634,7 @@ x = reg(df, m)
 
 ##############################################################################
 ##
-## Missing
+## Missing dependent / independent variables
 ##
 ##############################################################################
 
@@ -629,4 +657,3 @@ x = reg(df1,@model(a ~ b))
 @test coef(x) ≈ [-0.65, 0.35] atol = 1e-4
 x = reg(df1,@model(a ~ b, fe = c))
 @test coef(x) ≈ [0.5] atol = 1e-4
-
