@@ -1,25 +1,26 @@
-VcovFormula(::Type{Val{:cluster}}, x) = VcovClusterFormula(@eval(@formula(nothing ~ $x)).rhs)
+Vcov(::Type{Val{:cluster}}, x::Expr) = VcovCluster(@eval(@formula(nothing ~ $x)).rhs)
+Vcov(::Type{Val{:cluster}}, x::Symbol) = VcovCluster(StatsModels.Term(x))
+Vcov(::Type{Val{:cluster}}, x::Tuple) = VcovCluster((StatsModels.Term(t) for t in x))
 
-struct VcovClusterFormula <: AbstractVcovFormula
+struct VcovCluster <: AbstractVcov
     _::Any
 end
-allvars(x::VcovClusterFormula) =  vcat([allvars(a) for a in eachterm(x._)]...)
+allvars(x::VcovCluster) =  vcat([allvars(a) for a in eachterm(x._)]...)
 
 struct VcovClusterMethod <: AbstractVcovMethod
     clusters::DataFrame
 end
 
-function VcovMethod(df::AbstractDataFrame, vcovcluster::VcovClusterFormula)
+function VcovMethod(df::AbstractDataFrame, vcovcluster::VcovCluster)
     clusters = vcovcluster._
     vclusters = DataFrame(Matrix{Vector}(undef, size(df, 1), 0))
     for c in eachterm(clusters)
         if isa(c, Term)
             c = Symbol(c)
-            isa(df[!, c], CategoricalVector) || error("Cluster variable $(c) is of type $(typeof(df[!, c])), but should be a CategoricalVector.")
             vclusters[!, c] = group(df[!, c])
         elseif isa(c, InteractionTerm)
-            factorvars, interactionvars = _split(df, c)
-            vclusters[!, _name(factorvars)] = group((df[!, v] for v in factorvars)...)
+            factorvars = Symbol.(terms(c))
+            vclusters[!, Symbol(reduce((x1, x2) -> string(x1)*"&"*string(x2), factorvars))] = group((df[!, v] for v in factorvars)...)
         end
     end
     return VcovClusterMethod(vclusters)
@@ -55,8 +56,8 @@ function shat!(v::VcovClusterMethod, x::VcovData{T, N}) where {T, N}
 end
 
 # res is a Vector in OLS, Matrix in IV
-function helper_cluster(X::Matrix{Float64}, res::Union{Vector{Float64}, Matrix{Float64}}, f::CategoricalVector)
-    X2 = fill(zero(Float64), length(f.pool), size(X, 2) * size(res, 2))
+function helper_cluster(X::Matrix, res::Union{Vector, Matrix}, f::CategoricalVector)
+    X2 = zeros(eltype(X), length(f.pool), size(X, 2) * size(res, 2))
     index = 0
     for k in 1:size(res, 2)
         for j in 1:size(X, 2)

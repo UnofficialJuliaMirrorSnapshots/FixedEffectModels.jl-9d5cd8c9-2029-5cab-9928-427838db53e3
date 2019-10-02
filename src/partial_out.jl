@@ -23,25 +23,24 @@ The regression model is estimated on only the rows where *none* of the dependent
 ```julia
 using  RDatasets, DataFrames, FixedEffectModels, Gadfly
 df = dataset("datasets", "iris")
-df.SpeciesC =  categorical(df.Species)
-result = partial_out(df, @model(SepalWidth + SepalLength ~ 1, fe = SpeciesC), add_mean = true)
+df.SpeciesC = categorical(df.Species)
+result = partial_out(df, @model(SepalWidth + SepalLength ~ 1 + fe(SpeciesC)), add_mean = true)
 plot(layer(result[1], x="SepalWidth", y="SepalLength", Stat.binmean(n=10), Geom.point),
    layer(result[1], x="SepalWidth", y="SepalLength", Geom.smooth(method=:lm)))
 ```
 """
-function partial_out(df::AbstractDataFrame, m::Model; kwargs...)
+function partial_out(df::AbstractDataFrame, m::ModelTerm; kwargs...)
     partial_out(df, m.f; m.dict..., kwargs...)
 end
 
 
 function partial_out(df::AbstractDataFrame, f::FormulaTerm; 
-    fe::Union{Symbol, Expr, Nothing} = nothing, 
     weights::Union{Symbol, Expr, Nothing} = nothing,
     add_mean = false,
     maxiter::Integer = 10000, contrasts::Dict = Dict{Symbol, Any}(),
     method::Symbol = :lsmr,
     double_precision::Bool = true,
-    tol::Real = double_precision ? sqrt(eps(Float64)) : sqrt(eps(Float32)))
+    tol::Real = double_precision ? 1e-8 : 1e-6)
     weightvar = weights
 
     if  (ConstantTerm(0) ∉ eachterm(f.rhs)) & (ConstantTerm(1) ∉ eachterm(f.rhs))
@@ -49,17 +48,12 @@ function partial_out(df::AbstractDataFrame, f::FormulaTerm;
     end
     formula, formula_endo, formula_iv = decompose_iv(f)
     has_iv = formula_iv != nothing
-    has_absorb = fe != nothing
-    if has_iv
-        error("partial_out does not support instrumental variables")
-    end
-    has_weights = (weightvar != nothing)
+    has_iv && throw("partial_out does not support instrumental variables")
+    has_weights = weightvar != nothing
 
 
     # create a dataframe without missing values & negative weights
-    vars = allvars(formula)
-    absorb_vars = allvars(fe)
-    all_vars = unique(vcat(vars, absorb_vars))
+    all_vars = allvars(formula)
     esample = completecases(df[!, all_vars])
     if has_weights
         esample .&= isnaorneg(df[!, weightvar])
@@ -70,26 +64,32 @@ function partial_out(df::AbstractDataFrame, f::FormulaTerm;
     convergeds = Bool[]
 
     # Build fixedeffects, an array of AbtractFixedEffects
-    if has_absorb
-        feformula = @eval(@formula(nothing ~ $(fe)))
-        fes, ids = parse_fixedeffect(df, feformula)
-    end
+    fes, ids, formula = parse_fixedeffect(df, formula)
+    has_fes = !isempty(fes)
+
+
     nobs = sum(esample)
-    (nobs > 0) || error("sample is empty")
+    (nobs > 0) || throw("sample is empty")
     # Compute weight vector
-    sqrtw = get_weights(df, esample, weightvar)
-    if has_absorb
+    sqrtw = Ones{Float64}(sum(esample))
+    if has_weights
+        sqrtw = convert(Vector{Float64}, view(df, esample, weights))
+        sqrtw .= sqrt.(sqrtw)
+    end
+
+    if has_fes
         # in case some FixedEffect does not have interaction, remove the intercept
-        if any([isa(fe.interaction, Ones) for fe in fes])
+        if any(isa(fe.interaction, Ones) for fe in fes)
             formula = FormulaTerm(formula.lhs, tuple(ConstantTerm(0), (t for t in eachterm(formula.rhs) if t!= ConstantTerm(1))...))
-            has_absorb_intercept = true
+            has_fes_intercept = true
         end
         fes = FixedEffect[_subset(fe, esample) for fe in fes]
-        feM = AbstractFixedEffectMatrix{double_precision ? Float64 : Float32}(fes, sqrtw, Val{method})
+        feM = AbstractFixedEffectSolver{double_precision ? Float64 : Float32}(fes, sqrtw, Val{method})
     end
 
     # Compute residualized Y
-    subdf = columntable(disallowmissing!(df[esample, unique(vcat(vars))]))
+    vars = unique(allvars(formula))
+    subdf = StatsModels.columntable(disallowmissing!(df[esample, vars]))
     formula_y = FormulaTerm(ConstantTerm(0), (ConstantTerm(0), eachterm(formula.lhs)...))
     formula_y_schema = apply_schema(formula_y, schema(formula_y, subdf, contrasts), StatisticalModel)
     Y = convert(Matrix{Float64}, modelmatrix(formula_y_schema, subdf))
@@ -102,7 +102,7 @@ function partial_out(df::AbstractDataFrame, f::FormulaTerm;
     if add_mean
         m = mean(Y, dims = 1)
     end
-    if has_absorb
+    if has_fes
         Y, b, c = solve_residuals!(Y, feM; maxiter = maxiter, tol = tol)
         append!(iterations, b)
         append!(convergeds, c)
@@ -112,7 +112,7 @@ function partial_out(df::AbstractDataFrame, f::FormulaTerm;
     formula_x = FormulaTerm(ConstantTerm(0), formula.rhs)
     formula_x_schema = apply_schema(formula_x, schema(formula_x, subdf, contrasts), StatisticalModel)
     X = convert(Matrix{Float64}, modelmatrix(formula_x_schema, subdf))
-    if has_absorb
+    if has_fes
         X, b, c = solve_residuals!(X, feM; maxiter = maxiter, tol = tol)
         append!(iterations, b)
         append!(convergeds, c)
@@ -134,10 +134,15 @@ function partial_out(df::AbstractDataFrame, f::FormulaTerm;
     # Return a dataframe
     out = DataFrame()
     j = 0
+
     for y in ynames
         j += 1
-        out[!, y] = Vector{Union{Float64, Missing}}(missing, size(df, 1))
-        out[esample, y] = residuals[:, j]
+        if nobs < length(esample)
+            out[!, y] = Vector{Union{Float64, Missing}}(missing, size(df, 1))
+            out[esample, y] = residuals[:, j]
+        else
+            out[!, y] = residuals[:, j]
+        end
     end
     return out, iterations, convergeds
 end

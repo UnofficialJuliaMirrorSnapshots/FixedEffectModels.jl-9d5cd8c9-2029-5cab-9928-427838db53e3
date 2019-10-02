@@ -9,14 +9,12 @@ Its objective is similar to the Stata command [`reghdfe`](https://github.com/ser
 ![benchmark](http://www.matthieugomez.com/files/fixedeffectmodels_benchmark.png)
 
 ## Estimate a model
-To estimate a `@model`, specify  a formula with, eventually, a set of fixed effects with the argument `fe`, a way to compute standard errors with the argument `vcov`, and a weight variable with `weights`.
+To estimate a `@model`, specify  a formula with a way to compute standard errors with the argument `vcov`.
 
 ```julia
 using DataFrames, RDatasets, FixedEffectModels
 df = dataset("plm", "Cigar")
-df.StateCategorical =  categorical(df.State)
-df.YearCategorical =  categorical(df.Year)
-reg(df, @model(Sales ~ NDI, fe = StateCategorical + YearCategorical, weights = Pop, vcov = cluster(StateCategorical)))
+reg(df, @model(Sales ~ NDI + fe(State) + fe(Year), vcov = cluster(State)), weights = :Pop)
 # =====================================================================
 # Number of obs:               1380   Degrees of freedom:            31
 # R2:                         0.804   R2 within:                  0.139
@@ -28,56 +26,20 @@ reg(df, @model(Sales ~ NDI, fe = StateCategorical + YearCategorical, weights = P
 # NDI  -0.00526264 0.00144043 -3.65351    0.000 -0.00808837 -0.00243691
 # =====================================================================
 ```
-- A typical formula is composed of one dependent variable, exogeneous variables, endogeneous variables, and instrumental variables.
+- A typical formula is composed of one dependent variable, exogeneous variables, endogeneous variables, instrumental variables, and a set of high-dimensional fixed effects.
+	
 	```julia
-	dependent variable ~ exogenous variables + (endogenous variables ~ instrumental variables)
+	dependent variable ~ exogenous variables + (endogenous variables ~ instrumental variables) + fe(fixedeffect variable)
 	```
 
-- Fixed effect variables are indicated with the keyword argument `fe`. They must be of type CategoricalArray (use `categorical` to convert a variable to a `CategoricalArray`).
-
-	```julia
-	df.StateCategorical =  categorical(df.State)
-	# one high dimensional fixed effect
-	fe = StateCategorical
-	```
-	You can add an arbitrary number of high dimensional fixed effects, separated with `+`
-	```julia
-	df.YearCategorical =  categorical(df.Year)
-	fe = StateCategorical + YearCategorical
-	```
-	Interact multiple categorical variables using `&` 
-	```julia
-	fe = StateCategorical&DecPooled
-	```
-	Interact a categorical variable with a continuous variable using `&`
-	```julia
-	fe = StateCategorical + StateCategorical&Year
-	```
-	Alternative, use `*` to add a categorical variable and its interaction with a continuous variable
-	```julia
-	fe = StateCategorical*Year
-	# equivalent to fe = StateCategorical + StateCategorical&year
-	```
+	High-dimensional fixed effect variables are indicated with the function `fe`.  You can add an arbitrary number of high dimensional fixed effects, separated with `+`. Moreover, you can interact a fixed effect with a continuous variable (e.g. `fe(State)&Year`) or with another fixed effect (e.g. `fe(State)&fe(Year)`).
 
 - Standard errors are indicated with the keyword argument `vcov`.
 	```julia
-	vcov = robust
-	vcov = cluster(StateCategorical)
-	vcov = cluster(StateCategorical + YearCategorical)
+	vcov = robust()
+	vcov = cluster(State)
+	vcov = cluster(State + Year)
 	```
-
-- weights are indicated with the keyword argument `weights`
-	```julia
-	weights = Pop
-	```
-
-Arguments of `@model` are captured and transformed into expressions. If you want to program with `@model`, use expression interpolations:
-```julia
-using DataFrames, RDatasets, FixedEffectModels
-df = dataset("plm", "Cigar")
-w = :Pop
-reg(df, @model(Sales ~ NDI, weights = $(w)))
-```
 
 ## Output
 `reg` returns a light object. It is composed of 
@@ -95,6 +57,46 @@ Methods such as `predict`, `residuals` are still defined but require to specify 
 
 You may use [RegressionTables.jl](https://github.com/jmboehm/RegressionTables.jl) to get publication-quality regression tables.
 
+## Construct Model Programatically
+You can use
+```julia
+using StatsModels, DataFrames, RDatasets, FixedEffectModels
+df = dataset("plm", "Cigar")
+reg(df, ModelTerm(Term(:Sales) ~ Term(:NDI) + fe(Term(:State)) + fe(Term(:Year)), vcov = :(cluster(State))))
+```
+
+## Performances
+#### GPU
+The package has support for GPUs (Nvidia) (thanks to Paul Schrimpf). This makes the package an order of magnitude faster for complicated problems.
+
+First make sure that `using CuArrays` works without issue.
+```julia
+using FixedEffectModels
+df = dataset("plm", "Cigar")
+reg(df, @model(Sales ~ NDI + fe(State) + fe(Year)), method = :lsmr_gpu)
+```
+
+It is also encouraged to set the floating point precision to float32 when working on the GPU as that is usually much faster (using the option `double_precision = false`).
+
+
+#### Parallel Computing
+The package has support for [multi-threading](https://docs.julialang.org/en/v1.2/manual/parallel-computing/#man-multithreading-1) and [multi-cores](https://docs.julialang.org/en/v1.2/manual/parallel-computing/#Multi-Core-or-Distributed-Processing-1). In this case, each regressor is demeaned in a different thread. It only allows for a modest speedup (between 10% and 60%) since the demeaning operation is typically memory bound.
+
+```julia
+# Multi-threading
+Threads.nthreads()
+using DataFrames, RDatasets, FixedEffectModels
+df = dataset("plm", "Cigar")
+reg(df, @model(Sales ~ NDI + fe(State) + fe(Year)), method = :lsmr_threads)
+
+# Multi-cores 
+using Distributed
+addprocs(4)
+@everywhere using DataFrames,  RDatasets, FixedEffectModels
+df = dataset("plm", "Cigar")
+reg(df, @model(Sales ~ NDI + fe(State) + fe(Year)), method = :lsmr_cores)
+```
+
 
 ## Solution Method
 Denote the model `y = X β + D θ + e` where X is a matrix with few columns and D is the design matrix from categorical variables. Estimates for `β`, along with their standard errors, are obtained in two steps:
@@ -102,38 +104,6 @@ Denote the model `y = X β + D θ + e` where X is a matrix with few columns and 
 1. `y, X`  are regressed on `D` using the package [FixedEffects.jl](https://github.com/matthieugomez/FixedEffects.jl)
 2.  Estimates for `β`, along with their standard errors, are obtained by regressing the projected `y` on the projected `X` (an application of the Frisch Waugh-Lovell Theorem)
 3. With the option `save = true`, estimates for the high dimensional fixed effects are obtained after regressing the residuals of the full model minus the residuals of the partialed out models on `D` using the package [FixedEffects.jl](https://github.com/matthieugomez/FixedEffects.jl)
-
-## GPU
-The package has support for GPUs (Nvidia), thanks to Paul Schrimpf. This makes the package an order of magnitude faster for complicated problems.
-
-```julia
-using CuArrays, FixedEffectModels
-reg(df, @model(Sales ~ NDI, fe = StateCategorical + YearCategorical), method = :lsmr_gpu)
-```
-
-
-## Parallel / multi-threading
-The package has support for [parallel computing](https://docs.julialang.org/en/latest/manual/parallel-computing/) and [multi-threading](https://docs.julialang.org/en/latest/base/multi-threading/). In this case, each regressor is demeaned in a different processor/thread. It only allows for a modest speedup (between 10% and 60%) since the demeaning operation is typically memory bound.
-
-1. For [parallel computing](https://docs.julialang.org/en/latest/manual/parallel-computing/), the syntax is as follow:
-	```julia
-	using Distributed
-	addprocs(n)
-	@everywhere using DataFrames, FixedEffectModels
-	reg(df, @model(Sales ~ NDI, fe = StateCategorical + YearCategorical), method = :lsmr_parallel)
-	```
-2. For [multi-threading](https://docs.julialang.org/en/latest/base/multi-threading/),  before starting Julia, set the number of threads to `n` with
-	```
-	export JULIA_NUM_THREADS=n
-	```
-	Then, in Julia, use the option `lsmr_threads`
-	```julia
-	using DataFrames, FixedEffectModels
-	reg(df, @model(Sales ~ NDI, fe = StateCategorical + YearCategorical), method = :lsmr_threads)
-	```
-
-
-
 
 # References
 
