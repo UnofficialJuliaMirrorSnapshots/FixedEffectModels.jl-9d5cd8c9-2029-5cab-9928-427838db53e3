@@ -1,13 +1,13 @@
-Vcov(::Type{Val{:simple}}) = VcovSimple()
+struct Simple <: AbstractVcov end
+simple() = Simple()
 
-struct VcovSimple <: AbstractVcov end
+struct SimpleMethod <: AbstractVcovMethod end
 
-struct VcovSimpleMethod <: AbstractVcovMethod end
-VcovMethod(::AbstractDataFrame, ::VcovSimple) = VcovSimpleMethod()
+VcovMethod(::AbstractDataFrame, ::Simple) = SimpleMethod()
 
-function vcov!(::VcovSimpleMethod, x::VcovData)
-    invcrossmatrix = Matrix(inv(x.crossmatrix))
-    rmul!(invcrossmatrix, sum(abs2, x.residuals) /  x.dof_residual)
+function vcov!(::SimpleMethod, x::VcovData)
+    invcrossmatrix = Matrix(inv(crossmatrix(x)))
+    rmul!(invcrossmatrix, sum(abs2, residuals(x)) /  dof_residual(x))
     return Symmetric(invcrossmatrix)
 end
-shat!(::VcovSimpleMethod, x::VcovData) = scale(x.crossmatrix, sumabs2(x.residuals))
+shat!(::SimpleMethod, x::VcovData) = scale(crossmatrix(x), sumabs2(residuals(x)))

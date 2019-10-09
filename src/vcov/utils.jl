@@ -1,5 +1,4 @@
-function Fstat(coef::Vector{Float64}, matrix_vcov::AbstractMatrix{Float64},
-    nobs::Int, has_intercept::Bool, vcov_method_data::AbstractVcovMethod, vcov_data::VcovData)
+function Fstat(coef::Vector{Float64}, matrix_vcov::AbstractMatrix{Float64}, has_intercept::Bool)
     coefF = copy(coef)
     # TODO: check I can't do better
     length(coef) == has_intercept && return NaN
@@ -58,7 +57,7 @@ function ranktest!(X::Matrix{Float64},
     lambda = kronv * vec(theta)
 
     # compute vhat
-    if typeof(vcov_method) == VcovSimpleMethod
+    if typeof(vcov_method) == SimpleMethod
         vhat= Matrix(I/size(X, 1), L * K, L * K)
     else
         temp1 = convert(Matrix{eltype(Gmatrix)}, Gmatrix)
@@ -73,7 +72,5 @@ function ranktest!(X::Matrix{Float64},
     # why do I need to add Hermitian? (since 0.5)
     vlab = cholesky!(Hermitian(kronv * vhat * kronv'))
     r_kp = lambda' * (vlab \ lambda)
-    p_kp = ccdf(Chisq((L-K+1 )), r_kp[1])
-    F_kp = r_kp[1] / size(Z, 2)
-    return F_kp, p_kp
+    return r_kp[1]
 end

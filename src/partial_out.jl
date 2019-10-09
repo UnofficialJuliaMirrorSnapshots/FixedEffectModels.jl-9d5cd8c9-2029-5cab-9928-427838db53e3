@@ -2,8 +2,8 @@
 Partial out variables in a Dataframe
 
 ### Arguments
-* `df::AbstractDataFrame`
-* `model::Model`: A `Model` created using `@model`. See `@model`.
+* `df`: A table
+* `formula::FormulaTerm`: A formula created using `@formula`
 * `add_mean::Bool`: Should the initial mean added to the returned variable?
 * `method::Symbol`: A symbol for the method. Default is :lsmr (akin to conjugate gradient descent). Other choices are :lsmr_parallel, :lsmr_threads, :lsmr_gpu (requires `CuArrays`. Use the option `double_precision = false` to use `Float32` on the GPU).
 * `maxiter::Integer`: Maximum number of iterations
@@ -23,17 +23,11 @@ The regression model is estimated on only the rows where *none* of the dependent
 ```julia
 using  RDatasets, DataFrames, FixedEffectModels, Gadfly
 df = dataset("datasets", "iris")
-df.SpeciesC = categorical(df.Species)
-result = partial_out(df, @model(SepalWidth + SepalLength ~ 1 + fe(SpeciesC)), add_mean = true)
+result = partial_out(df, @formula(SepalWidth + SepalLength ~ fe(Species)), add_mean = true)
 plot(layer(result[1], x="SepalWidth", y="SepalLength", Stat.binmean(n=10), Geom.point),
    layer(result[1], x="SepalWidth", y="SepalLength", Geom.smooth(method=:lm)))
 ```
 """
-function partial_out(df::AbstractDataFrame, m::ModelTerm; kwargs...)
-    partial_out(df, m.f; m.dict..., kwargs...)
-end
-
-
 function partial_out(df::AbstractDataFrame, f::FormulaTerm; 
     weights::Union{Symbol, Expr, Nothing} = nothing,
     add_mean = false,
@@ -41,7 +35,6 @@ function partial_out(df::AbstractDataFrame, f::FormulaTerm;
     method::Symbol = :lsmr,
     double_precision::Bool = true,
     tol::Real = double_precision ? 1e-8 : 1e-6)
-    weightvar = weights
 
     if  (ConstantTerm(0) ∉ eachterm(f.rhs)) & (ConstantTerm(1) ∉ eachterm(f.rhs))
         f = FormulaTerm(f.lhs, tuple(ConstantTerm(1), eachterm(f.rhs)...))
@@ -49,14 +42,14 @@ function partial_out(df::AbstractDataFrame, f::FormulaTerm;
     formula, formula_endo, formula_iv = decompose_iv(f)
     has_iv = formula_iv != nothing
     has_iv && throw("partial_out does not support instrumental variables")
-    has_weights = weightvar != nothing
+    has_weights = weights != nothing
 
 
     # create a dataframe without missing values & negative weights
-    all_vars = allvars(formula)
+    all_vars = StatsModels.termvars(formula)
     esample = completecases(df[!, all_vars])
     if has_weights
-        esample .&= isnaorneg(df[!, weightvar])
+        esample .&= BitArray(!ismissing(x) & (x > 0) for x in df[!, weights])
     end
 
     # initialize iterations & converged
@@ -88,7 +81,7 @@ function partial_out(df::AbstractDataFrame, f::FormulaTerm;
     end
 
     # Compute residualized Y
-    vars = unique(allvars(formula))
+    vars = unique(StatsModels.termvars(formula))
     subdf = StatsModels.columntable(disallowmissing!(df[esample, vars]))
     formula_y = FormulaTerm(ConstantTerm(0), (ConstantTerm(0), eachterm(formula.lhs)...))
     formula_y_schema = apply_schema(formula_y, schema(formula_y, subdf, contrasts), StatisticalModel)
@@ -98,7 +91,6 @@ function partial_out(df::AbstractDataFrame, f::FormulaTerm;
     if !isa(ynames, Vector)
         ynames = [ynames]
     end
-    ynames = Symbol.(ynames)
     if add_mean
         m = mean(Y, dims = 1)
     end
@@ -138,17 +130,11 @@ function partial_out(df::AbstractDataFrame, f::FormulaTerm;
     for y in ynames
         j += 1
         if nobs < length(esample)
-            out[!, y] = Vector{Union{Float64, Missing}}(missing, size(df, 1))
-            out[esample, y] = residuals[:, j]
+            out[!, Symbol(y)] = Vector{Union{Float64, Missing}}(missing, size(df, 1))
+            out[esample, Symbol(y)] = residuals[:, j]
         else
-            out[!, y] = residuals[:, j]
+            out[!, Symbol(y)] = residuals[:, j]
         end
     end
     return out, iterations, convergeds
 end
-
-
-
-
-
-

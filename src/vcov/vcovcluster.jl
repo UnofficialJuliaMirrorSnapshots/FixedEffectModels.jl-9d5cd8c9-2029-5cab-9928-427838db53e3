@@ -1,44 +1,40 @@
-Vcov(::Type{Val{:cluster}}, x::Expr) = VcovCluster(@eval(@formula(nothing ~ $x)).rhs)
-Vcov(::Type{Val{:cluster}}, x::Symbol) = VcovCluster(StatsModels.Term(x))
-Vcov(::Type{Val{:cluster}}, x::Tuple) = VcovCluster((StatsModels.Term(t) for t in x))
-
-struct VcovCluster <: AbstractVcov
-    _::Any
+struct Cluster <: AbstractVcov
+    _::NTuple
 end
-allvars(x::VcovCluster) =  vcat([allvars(a) for a in eachterm(x._)]...)
 
-struct VcovClusterMethod <: AbstractVcovMethod
+cluster(x::Symbol) = Cluster((x,))
+cluster(args...) = Cluster(args)
+
+DataFrames.completecases(df::AbstractDataFrame, x::Cluster) = completecases(df, collect(x._))
+
+
+struct ClusterMethod <: AbstractVcovMethod
     clusters::DataFrame
 end
 
-function VcovMethod(df::AbstractDataFrame, vcovcluster::VcovCluster)
-    clusters = vcovcluster._
+function VcovMethod(df::AbstractDataFrame, cluster::Cluster)
+    clusters = cluster._
     vclusters = DataFrame(Matrix{Vector}(undef, size(df, 1), 0))
-    for c in eachterm(clusters)
-        if isa(c, Term)
-            c = Symbol(c)
-            vclusters[!, c] = group(df[!, c])
-        elseif isa(c, InteractionTerm)
-            factorvars = Symbol.(terms(c))
-            vclusters[!, Symbol(reduce((x1, x2) -> string(x1)*"&"*string(x2), factorvars))] = group((df[!, v] for v in factorvars)...)
-        end
+    for c in cluster._
+        vclusters[!, c] = group(df[!, c])
     end
-    return VcovClusterMethod(vclusters)
+    return ClusterMethod(vclusters)
 end
 
-function df_FStat(v::VcovClusterMethod, ::VcovData, ::Bool)
+
+function df_FStat(v::ClusterMethod, ::VcovData, ::Bool)
     minimum((length(v.clusters[!, c].pool) for c in names(v.clusters))) - 1
 end
 
-function vcov!(v::VcovClusterMethod, x::VcovData)
+function vcov!(v::ClusterMethod, x::VcovData)
     S = shat!(v, x)
-    invcrossmatrix = inv(x.crossmatrix)
+    invcrossmatrix = inv(crossmatrix(x))
     return pinvertible(Symmetric(invcrossmatrix * S * invcrossmatrix))
 end
 
-function shat!(v::VcovClusterMethod, x::VcovData{T, N}) where {T, N}
+function shat!(v::ClusterMethod, x::VcovData{T, N}) where {T, N}
     # Cameron, Gelbach, & Miller (2011): section 2.3
-    dim = size(x.regressors, 2) * size(x.residuals, 2)
+    dim = size(modelmatrix(x), 2) * size(residuals(x), 2)
     S = zeros(dim, dim)
     G = typemax(Int)
     for c in combinations(names(v.clusters))
@@ -46,13 +42,13 @@ function shat!(v::VcovClusterMethod, x::VcovData{T, N}) where {T, N}
         f = (length(c) == 1) ? v.clusters[!, c[1]] : group((v.clusters[!, var] for var in c)...)
         # capture length of smallest dimension of multiway clustering in G
         G = min(G, length(f.pool))
-        S += (-1)^(length(c) - 1) * helper_cluster(x.regressors, x.residuals, f)
+        S += (-1)^(length(c) - 1) * helper_cluster(modelmatrix(x), residuals(x), f)
     end
     # scale total vcov estimate by ((N-1)/(N-K)) * (G/(G-1))
     # another option would be to adjust each matrix given by helper_cluster by number of its categories
     # both methods are presented in Cameron, Gelbach and Miller (2011), section 2.3
     # I choose the first option following reghdfe
-    rmul!(S, (size(x.regressors, 1) - 1) / x.dof_residual * G / (G - 1))
+    rmul!(S, (size(modelmatrix(x), 1) - 1) / dof_residual(x) * G / (G - 1))
 end
 
 # res is a Vector in OLS, Matrix in IV
