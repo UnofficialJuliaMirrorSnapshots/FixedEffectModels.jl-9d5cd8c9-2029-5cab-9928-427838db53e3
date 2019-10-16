@@ -29,7 +29,6 @@ using FixedEffects
 export reg,
 partial_out,
 fe,
-fes,
 
 FixedEffectModel,
 has_iv,
@@ -38,19 +37,22 @@ has_fe,
 Vcov,
 
 #deprecated
-@model
+@model,
+fes
 
 ##############################################################################
 ##
 ## Load files
 ##
 ##############################################################################
+include("vcov/Vcov.jl")
+
 include("utils/fixedeffects.jl")
 include("utils/basecol.jl")
 include("utils/tss.jl")
+include("utils/ranktest.jl")
 include("utils/formula.jl")
 
-include("vcov/Vcov.jl")
 
 include("FixedEffectModel.jl")
 include("fit.jl")
