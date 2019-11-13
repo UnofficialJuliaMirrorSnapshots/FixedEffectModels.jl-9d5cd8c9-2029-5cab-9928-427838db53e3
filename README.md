@@ -45,7 +45,6 @@ reg(df, @formula(Sales ~ NDI + fe(State) + fe(Year)), Vcov.cluster(:State), weig
 	reg(df, @formula(Sales ~ (Price ~ Pimin)))
 	```
 
-
 	To construct formula programatically, use
 	```julia
 	reg(df, Term(:Sales) ~ Term(:NDI) + fe(Term(:State)) + fe(Term(:Year))
@@ -66,9 +65,14 @@ reg(df, @formula(Sales ~ NDI + fe(State) + fe(Year)), Vcov.cluster(:State), weig
 	subset = df.State .>= 30
 	```
 - The option `save` can be set to one of the following:  `:residuals` to save residuals, `:fe` to save fixed effects, `true` to save both
-- The option `contrasts` specifies particular contrasts for categorical variables in the formula, e.g. `contrasts = Dict(:YearC => DummyCoding(base = 80)))`
+
 - The option `method` can be set to one of the following: `:lsmr`, `:lsmr_gpu`, `:lsmr_threads`, `:lsmr_cores` (see Performances below).
 
+- The option `contrasts` specifies particular contrasts for categorical variables in the formula, e.g. 
+	```julia
+	df.YearC = categorical(df.Year)
+	reg(df, @formula(Sales ~ YearC); contrasts = Dict(:YearC => DummyCoding(base = 80)))
+	```
 ## Output
 `reg` returns a light object. It is composed of 
  
@@ -89,13 +93,14 @@ You may use [RegressionTables.jl](https://github.com/jmboehm/RegressionTables.jl
 The package has support for GPUs (Nvidia) (thanks to Paul Schrimpf). This can make the package an order of magnitude faster for complicated problems.
 
 First make sure that `using CuArrays` works without issue. Then, estimate a model with `method = :lsmr_gpu`.
+
+When working on the GPU, it is encouraged to set the floating point precision to `Float32` with `double_precision = false`, since it is usually much faster.
+
 ```julia
 using FixedEffectModels
 df = dataset("plm", "Cigar")
-reg(df, @formula(Sales ~ NDI + fe(State) + fe(Year)), method = :lsmr_gpu)
+reg(df, @formula(Sales ~ NDI + fe(State) + fe(Year)), method = :lsmr_gpu, double_precision = false)
 ```
-
-When working on the GPU, it is encouraged to set the floating point precision to `Float32` with `double_precision = false`, since it is usually much faster.
 
 
 #### Parallel Computing

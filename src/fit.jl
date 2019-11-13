@@ -22,30 +22,36 @@ Models with instruments variables are estimated using 2SLS. `reg` tests for weak
 using RDatasets, FixedEffectModels
 df = dataset("plm", "Cigar")
 @time reg(df, @formula(Sales ~ Price))
-reg(df, @formula(Sales ~ Price + fe(State) + fe(Year)))
+@time reg(df, @formula(Sales ~ Price + fe(State) + fe(Year)))
 reg(df, @formula(Sales ~ NDI + fe(State) + fe(State)&Year))
 reg(df, @formula(Sales ~ NDI + fe(State)*Year))
 reg(df, @formula(Sales ~ (Price ~ Pimin)))
 @time reg(df, @formula(Sales ~ Price), weights = :Pop)
-reg(df, @formula(Sales ~ NDI), Vcov.robust()))
-reg(df, @formula(Sales ~ NDI), Vcov.cluster(:State)))
-reg(df, @formula(Sales ~ NDI), Vcov.cluster(:State , :Year)))
-df.Yearc = categoricay(df.Year)
+reg(df, @formula(Sales ~ NDI), Vcov.robust())
+reg(df, @formula(Sales ~ NDI), Vcov.cluster(:State))
+reg(df, @formula(Sales ~ NDI), Vcov.cluster(:State , :Year))
+df.YearC = categorical(df.Year)
 reg(df, @formula(Sales ~ YearC), contrasts = Dict(:YearC => DummyCoding(base = 80)))
 ```
 """
-function reg(df, f::FormulaTerm, vcov::CovarianceEstimator = Vcov.simple();
-    weights::Union{Symbol, Nothing} = nothing,
-    subset::Union{AbstractVector, Nothing} = nothing,
-    maxiter::Integer = 10000, contrasts::Dict = Dict{Symbol, Any}(),
+function reg(@nospecialize(df), 
+    @nospecialize(formula::FormulaTerm), 
+    @nospecialize(vcov::CovarianceEstimator = Vcov.simple());
+    @nospecialize(weights::Union{Symbol, Nothing} = nothing),
+    @nospecialize(subset::Union{AbstractVector, Nothing} = nothing),
+    maxiter::Integer = 10000, 
+    contrasts::Dict = Dict{Symbol, Any}(),
     dof_add::Integer = 0,
-    save::Union{Bool, Symbol} = false,  method::Symbol = :lsmr, drop_singletons = true, 
-    double_precision::Bool = true, tol::Real = double_precision ? 1e-8 : 1e-6,
-    feformula::Union{Symbol, Expr, Nothing} = nothing,
-    vcovformula::Union{Symbol, Expr, Nothing} = nothing,
-    subsetformula::Union{Symbol, Expr, Nothing} = nothing)
-    df = DataFrame(df; copycols = false) 
+    @nospecialize(save::Union{Bool, Symbol} = false),  
+    method::Symbol = :lsmr, 
+    drop_singletons = true, 
+    double_precision::Bool = true, 
+    tol::Real = double_precision ? 1e-8 : 1e-6,
+    @nospecialize(feformula::Union{Symbol, Expr, Nothing} = nothing),
+    @nospecialize(vcovformula::Union{Symbol, Expr, Nothing} = nothing),
+    @nospecialize(subsetformula::Union{Symbol, Expr, Nothing} = nothing))
 
+    df = DataFrame(df; copycols = false) 
     # to deprecate
     if vcovformula != nothing
         if (vcovformula == :simple) | (vcovformula == :(simple()))
@@ -65,13 +71,14 @@ function reg(df, f::FormulaTerm, vcov::CovarianceEstimator = Vcov.simple();
     ## Parse formula
     ##
     ##############################################################################
-    if  (ConstantTerm(0) ∉ eachterm(f.rhs)) & (ConstantTerm(1) ∉ eachterm(f.rhs))
-        f = FormulaTerm(f.lhs, tuple(ConstantTerm(1), eachterm(f.rhs)...))
+ 
+    formula_origin = formula
+    if  !any(term isa ConstantTerm for term in eachterm(formula.rhs))
+        formula = FormulaTerm(formula.lhs, tuple(ConstantTerm(1), eachterm(formula.rhs)...))
     end
-    formula, formula_endo, formula_iv = decompose_iv(f)
+    formula, formula_endo, formula_iv = parse_iv(formula)
     has_iv = formula_iv != nothing
     has_weights = weights != nothing
-
 
     ##############################################################################
     ##
@@ -84,7 +91,6 @@ function reg(df, f::FormulaTerm, vcov::CovarianceEstimator = Vcov.simple();
         end
     end
     save_residuals = (save == :residuals) | (save == true)
-
 
     ##############################################################################
     ##
@@ -110,10 +116,7 @@ function reg(df, f::FormulaTerm, vcov::CovarianceEstimator = Vcov.simple();
     if has_weights
         esample .&= BitArray(!ismissing(x) & (x > 0) for x in df[!, weights])
     end
-
     esample .&= Vcov.completecases(df, vcov)
-
-
     if subset != nothing
         if length(subset) != size(df, 1)
             throw("df has $(size(df, 1)) rows but the subset vector has $(length(subset)) elements")
@@ -138,7 +141,7 @@ function reg(df, f::FormulaTerm, vcov::CovarianceEstimator = Vcov.simple();
 
     nobs = sum(esample)
     (nobs > 0) || throw("sample is empty")
-
+    
 
     # Compute weights
     if has_weights
@@ -150,18 +153,15 @@ function reg(df, f::FormulaTerm, vcov::CovarianceEstimator = Vcov.simple();
     sqrtw = sqrt.(values(weights))
 
     # Compute feM, an AbstractFixedEffectSolver
-    has_fes_intercept = false
+    has_intercept = !(ConstantTerm(0) ∈ eachterm(formula.rhs))
+    has_fe_intercept = false
     if has_fes
-        # in case some FixedEffect does not have interaction, remove the intercept
         if any(fe.interaction isa Ones for fe in fes)
-            formula = FormulaTerm(formula.lhs, tuple(ConstantTerm(0), (t for t in eachterm(formula.rhs) if t!= ConstantTerm(1))...))
-            has_fes_intercept = true
+            has_fe_intercept = true
         end
         fes = FixedEffect[_subset(fe, esample) for fe in fes]
         feM = AbstractFixedEffectSolver{double_precision ? Float64 : Float32}(fes, weights, Val{method})
     end
-
-    has_intercept = ConstantTerm(1) ∈ eachterm(formula.rhs)
     
     # Compute data for std errors
     vcov_method = Vcov.materialize(view(df, esample, :), vcov)
@@ -184,11 +184,10 @@ function reg(df, f::FormulaTerm, vcov::CovarianceEstimator = Vcov.simple();
     Xexo = convert(Matrix{Float64}, modelmatrix(formula_schema, subdf))
     all(isfinite, Xexo) || throw("Some observations for the exogeneous variables are infinite")
 
-    yname, coef_names = coefnames(formula_schema)
+    response_name, coef_names = coefnames(formula_schema)
     if !(coef_names isa Vector)
         coef_names = typeof(coef_names)[coef_names]
     end
-
 
     if has_iv
         subdf = StatsModels.columntable(disallowmissing!(df[esample, endo_vars]))
@@ -215,8 +214,7 @@ function reg(df, f::FormulaTerm, vcov::CovarianceEstimator = Vcov.simple();
     end
 
     # compute tss now before potentially demeaning y
-    tss_ = tss(y, has_intercept | has_fes_intercept, sqrtw)
-
+    tss_ = tss(y, has_intercept | has_fe_intercept, sqrtw)
 
     # create unitilaized 
     iterations, converged, r2_within = nothing, nothing, nothing
@@ -268,6 +266,7 @@ function reg(df, f::FormulaTerm, vcov::CovarianceEstimator = Vcov.simple();
         Xendo .= Xendo .* sqrtw
         Z .= Z .* sqrtw
     end
+
     ##############################################################################
     ##
     ## Get Linearly Independent Components of Matrix
@@ -299,7 +298,6 @@ function reg(df, f::FormulaTerm, vcov::CovarianceEstimator = Vcov.simple();
         ## partial out Z in place wrt Xexo
         Pi2 = cholesky!(Symmetric(Xexo' * Xexo)) \ (Xexo' * Z)
         Z_res = BLAS.gemm!('N', 'N', -1.0, Xexo, Pi2, 1.0, Z)
-
     else
         # get linearly independent columns
         basecolXexo = basecol(Xexo)
@@ -308,7 +306,6 @@ function reg(df, f::FormulaTerm, vcov::CovarianceEstimator = Vcov.simple();
         X = Xexo
         basecoef = basecolXexo
     end
-
 
     ##############################################################################
     ##
@@ -360,22 +357,27 @@ function reg(df, f::FormulaTerm, vcov::CovarianceEstimator = Vcov.simple();
         for fe in fes
             # adjust degree of freedom only if fe is not fully nested in a cluster variable:
             if (vcov isa Vcov.ClusterCovariance) && any(isnested(fe, v.refs) for v in values(vcov_method.clusters))
-                    dof_absorb += 1 # if fe is nested you still lose 1 degree of freedom 
+                dof_absorb += 1 # if fe is nested you still lose 1 degree of freedom 
             else
                 #only count groups that exists
-                dof_absorb += ndistincts(fe)
+                dof_absorb += nunique(fe)
             end
         end
     end
     dof_residual = max(1, nobs - size(X, 2) - dof_absorb - dof_add)
+    
+    nclusters = nothing
+    if vcov isa Vcov.ClusterCovariance
+        nclusters = map(x -> length(levels(x)), vcov_method.clusters)
+    end
 
     # Compute rss, tss, r2, r2 adjusted
     rss = sum(abs2, residuals)
     mss = tss_ - rss
     r2 = 1 - rss / tss_
-    adjr2 = 1 - rss / tss_ * (nobs - (has_intercept | has_fes_intercept)) / dof_residual
+    adjr2 = 1 - rss / tss_ * (nobs - (has_intercept | has_fe_intercept)) / dof_residual
     if has_fes
-        r2_within = 1 - rss / tss(y, (has_intercept | has_fes_intercept), sqrtw)
+        r2_within = 1 - rss / tss(y, has_intercept | has_fe_intercept, sqrtw)
     end
 
     # Compute standard error
@@ -417,9 +419,8 @@ function reg(df, f::FormulaTerm, vcov::CovarianceEstimator = Vcov.simple();
         coef = newcoef
         matrix_vcov = newmatrix_vcov
     end
-
-    return FixedEffectModel(coef, matrix_vcov, vcov, esample, augmentdf,
-                            coef_names, yname, f, formula_schema, nobs, dof_residual,
+    return FixedEffectModel(coef, matrix_vcov, vcov, nclusters, esample, augmentdf,
+                            coef_names, response_name, formula_origin, formula_schema, nobs, dof_residual,
                             rss, tss_, r2, adjr2, F, p,
                             iterations, converged, r2_within, 
                             F_kp, p_kp)
